@@ -88,18 +88,16 @@ depmod -a
 These patches should be submitted to `platform-driver-x86@vger.kernel.org`
 (maintainer: Hans de Goede / Ilpo Järvinen). Once merged into the mainline
 kernel, this whole repo becomes unnecessary — the stock `toshiba_acpi` will
-just work on dynabook hardware. See `patches/` for the standalone,
-`git send-email`-ready diffs. (Draft submission cover letters are tracked in
-the project wiki / the investigation notes.)
-
-Until then, the DKMS module here is the portable workaround and survives
-kernel updates automatically (`AUTOINSTALL=yes`).
+just work on dynabook hardware. The standalone, `git send-email`-ready diffs
+and cover letter live in `submission/` (kept out of the install path on
+purpose). Until then, the DKMS module here is the portable workaround and
+survives kernel updates automatically (`AUTOINSTALL=yes`).
 
 ## Files
 
 - `dkms/` — patched `toshiba_acpi.c` + `dkms.conf` (ready to copy to
   `/usr/src/toshiba_acpi_dynabook-0.24`).
-- `patches/` — the two standalone kernel patches, formatted for
-  `git apply` / `git send-email`.
+- `submission/` — *(not required to install)* the two standalone kernel
+  patches + cover letter, formatted for `git send-email` upstream.
 - `investigation.md` — full root-cause analysis, evidence trail, and ACPI
   disassembly notes.

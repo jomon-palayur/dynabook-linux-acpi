@@ -1,7 +1,15 @@
-# Ignore build artifacts
-/dkms/*.o
-/dkms/*.ko
-/dkms/*.mod
-/dkms/*.mod.c
-/dkms/*.symvers
-/dkms/.tmp_*
+# Build artifacts from DKMS builds
+dkms/**/*.o
+dkms/**/*.ko
+dkms/**/*.mod
+dkms/**/*.mod.c
+dkms/**/*.symvers
+dkms/**/.*.cmd
+dkms/**/.tmp_*
+
+# Kernel upstream-submission artifacts (not needed to install/use the module)
+submission/
+
+# Editor / OS cruft
+*.swp
+.DS_Store
