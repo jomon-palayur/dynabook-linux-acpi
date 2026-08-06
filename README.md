@@ -31,11 +31,11 @@ and coalesces rapid presses. Leftover entries replayed on later keypresses.
 
 ## Fixes
 
-Two minimal, upstream-friendly patches (in `patches/`):
+Two minimal, upstream-friendly patches (in `submission/`):
 
 1. `0001-toshiba_acpi-add-DNBK0001.patch` — add `DNBK0001` to the driver's
    ACPI match table (one line).
-2. `0001-toshiba_acpi-drain-INFO-FIFO-on-hotkey-Notify.patch` — drain the
+2. `0002-toshiba_acpi-drain-INFO-FIFO-on-hotkey-Notify.patch` — drain the
    entire INFO FIFO per SCI Notify (loop until empty), mirroring the
    driver's existing `HCI_SYSTEM_EVENT` path.
 
@@ -44,14 +44,26 @@ recompiling by hand.
 
 ## Install (as root)
 
+**Easy way** — use the included script:
+
 ```sh
 git clone https://github.com/<you>/dynabook-x40k-acpi.git
 cd dynabook-x40k-acpi
-cp -r dkms /usr/src/toshiba_acpi_dynabook-0.24
-dkms add -m toshiba_acpi_dynabook -v 0.24
-dkms build -m toshiba_acpi_dynabook -v 0.24
-dkms install -m toshiba_acpi_dynabook -v 0.24
-modprobe toshiba_acpi
+sudo ./install.sh
+```
+
+**Manual way:**
+
+```sh
+git clone https://github.com/<you>/dynabook-x40k-acpi.git
+cd dynabook-x40k-acpi
+sudo mkdir -p /usr/src/toshiba_acpi_dynabook-0.24
+sudo cp dkms/toshiba_acpi.c /usr/src/toshiba_acpi_dynabook-0.24/
+sudo cp dkms/dkms.conf     /usr/src/toshiba_acpi_dynabook-0.24/
+sudo dkms add    -m toshiba_acpi_dynabook -v 0.24
+sudo dkms build  -m toshiba_acpi_dynabook -v 0.24
+sudo dkms install -m toshiba_acpi_dynabook -v 0.24
+sudo modprobe toshiba_acpi
 ```
 
 > **Note for CachyOS / clang-built kernels:** the module must be built with
@@ -65,12 +77,18 @@ ls /sys/class/leds/ | grep toshiba     # -> toshiba::kbd_backlight
 lsmod | grep toshiba_acpi              # -> loaded
 ```
 
-The keyboard backlight is now controllable via:
+The keyboard backlight is now controllable via sysfs (substitute your actual
+path — the `DNBK0001:00` segment is stable but the prefix may vary):
 
 ```sh
+# find the node
+BACKLIGHT=/sys/devices/LNXSYSTM:00/LNXSYBUS:00/DNBK0001:00
+
 # mode: 0x2 = AUTO (with timeout), 0x8 = ON, 0x10 = OFF
-tee /sys/devices/LNXSYSTM:00/LNXSYBUS:00/DNBK0001:00/kbd_backlight_mode
-tee /sys/devices/LNXSYSTM:00/LNXSYBUS:00/DNBK0001:00/kbd_backlight_timeout   # 1-60 s
+echo 0x8  | sudo tee "$BACKLIGHT/kbd_backlight_mode"
+
+# auto-off timeout in seconds (1-60), used in AUTO mode
+echo 8    | sudo tee "$BACKLIGHT/kbd_backlight_timeout"
 ```
 
 `AUTOINSTALL=yes` in `dkms.conf` means the module auto-rebuilds on every
