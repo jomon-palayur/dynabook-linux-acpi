@@ -70,6 +70,11 @@ sudo modprobe toshiba_acpi
 > `LLVM=1` (the `dkms.conf` in this repo already does this automatically). A
 > plain gcc build fails with `-mstack-alignment` errors on clang kernels.
 
+> **Secure Boot:** DKMS signs the module with `/var/lib/dkms/mok.key`. If
+> Secure Boot is enabled, you must enroll the MOK certificate
+> (`/var/lib/dkms/mok.pub`) in your firmware/SHIM *before* the module will
+> load — otherwise it is rejected. With Secure Boot off, no action is needed.
+
 After loading, verify:
 
 ```sh
