@@ -1,0 +1,10 @@
+--- ../toshiba_acpi.c	2026-08-06 21:54:35.109608448 +0530
++++ toshiba_acpi.c	2026-08-06 21:55:48.356726713 +0530
+@@ -242,6 +242,7 @@
+ 	{"TOS6207", 0},
+ 	{"TOS6208", 0},
+ 	{"TOS1900", 0},
++	{"DNBK0001", 0},	/* dynabook (Portege X40-K etc.) rebranded TOS1900 */
+ 	{"", 0},
+ };
+ MODULE_DEVICE_TABLE(acpi, toshiba_device_ids);

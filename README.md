@@ -1,0 +1,105 @@
+# dynabook-x40k-acpi
+
+Linux kernel support for the **Dynabook Portégé X40-K** (and likely other
+dynabook laptops shipping the rebranded Toshiba HCI/SCI firmware) keyboard
+backlight and Fn hotkeys.
+
+## Problem
+
+On a stock Linux kernel:
+
+- `/sys/class/leds` has **no keyboard-backlight device** (only capslock,
+  numlock, scrolllock, wifi).
+- The Fn brightness keys and keyboard-backlight key generate no usable events.
+- `intel_backlight` works fine, so the panel itself is fine — only the
+  firmware hotkey interface is missing in Linux.
+
+## Root cause
+
+Dynabook is the spun-off Toshiba PC division. The firmware still implements
+the Toshiba HCI/SCI protocol verbatim under ACPI device `\_SB.VALZ` with
+`_HID = "DNBK0001"`. The in-tree driver
+`drivers/platform/x86/toshiba_acpi.c` implements this protocol but its ACPI
+match table only lists Toshiba-era IDs (`TOS1900`, …). `DNBK0001` is absent,
+so the driver never binds. Without the driver, the EC's hotkey FIFO is never
+drained and no events reach Linux.
+
+A second, independent bug caused hotkeys to "bleed" into each other under
+rapid presses: the driver's `info_supported` hotkey path read the event FIFO
+only **once per Notify**, while the EC enqueues a press + release pair per key
+and coalesces rapid presses. Leftover entries replayed on later keypresses.
+
+## Fixes
+
+Two minimal, upstream-friendly patches (in `patches/`):
+
+1. `0001-toshiba_acpi-add-DNBK0001.patch` — add `DNBK0001` to the driver's
+   ACPI match table (one line).
+2. `0001-toshiba_acpi-drain-INFO-FIFO-on-hotkey-Notify.patch` — drain the
+   entire INFO FIFO per SCI Notify (loop until empty), mirroring the
+   driver's existing `HCI_SYSTEM_EVENT` path.
+
+Both are bundled as a DKMS module so they survive kernel updates without
+recompiling by hand.
+
+## Install (as root)
+
+```sh
+git clone https://github.com/<you>/dynabook-x40k-acpi.git
+cd dynabook-x40k-acpi
+cp -r dkms /usr/src/toshiba_acpi_dynabook-0.24
+dkms add -m toshiba_acpi_dynabook -v 0.24
+dkms build -m toshiba_acpi_dynabook -v 0.24
+dkms install -m toshiba_acpi_dynabook -v 0.24
+modprobe toshiba_acpi
+```
+
+> **Note for CachyOS / clang-built kernels:** the module must be built with
+> `LLVM=1` (the `dkms.conf` in this repo already does this automatically). A
+> plain gcc build fails with `-mstack-alignment` errors on clang kernels.
+
+After loading, verify:
+
+```sh
+ls /sys/class/leds/ | grep toshiba     # -> toshiba::kbd_backlight
+lsmod | grep toshiba_acpi              # -> loaded
+```
+
+The keyboard backlight is now controllable via:
+
+```sh
+# mode: 0x2 = AUTO (with timeout), 0x8 = ON, 0x10 = OFF
+tee /sys/devices/LNXSYSTM:00/LNXSYBUS:00/DNBK0001:00/kbd_backlight_mode
+tee /sys/devices/LNXSYSTM:00/LNXSYBUS:00/DNBK0001:00/kbd_backlight_timeout   # 1-60 s
+```
+
+`AUTOINSTALL=yes` in `dkms.conf` means the module auto-rebuilds on every
+kernel update.
+
+## Remove
+
+```sh
+dkms remove -m toshiba_acpi_dynabook -v 0.24 --all
+depmod -a
+```
+
+## Upstream
+
+These patches should be submitted to `platform-driver-x86@vger.kernel.org`
+(maintainer: Hans de Goede / Ilpo Järvinen). Once merged into the mainline
+kernel, this whole repo becomes unnecessary — the stock `toshiba_acpi` will
+just work on dynabook hardware. See `patches/` for the standalone,
+`git send-email`-ready diffs. (Draft submission cover letters are tracked in
+the project wiki / the investigation notes.)
+
+Until then, the DKMS module here is the portable workaround and survives
+kernel updates automatically (`AUTOINSTALL=yes`).
+
+## Files
+
+- `dkms/` — patched `toshiba_acpi.c` + `dkms.conf` (ready to copy to
+  `/usr/src/toshiba_acpi_dynabook-0.24`).
+- `patches/` — the two standalone kernel patches, formatted for
+  `git apply` / `git send-email`.
+- `investigation.md` — full root-cause analysis, evidence trail, and ACPI
+  disassembly notes.
