@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""
+dynabook-kbdbacklightd
+
+On the Dynabook Portege X40-K the firmware delivers KEY_KBDILLUMTOGGLE (228)
+correctly via the "Toshiba input device", but nothing acts on it: GNOME only
+shows the OSD and the toshiba_acpi driver does not toggle the backlight
+itself. This daemon passively listens for that keycode and cycles the
+keyboard-backlight mode through OFF -> ON -> AUTO.
+
+Passive (non-grab) evdev reader: it does NOT consume the event, so GNOME's
+OSD still appears. It merely performs the actual hardware toggle by writing
+kbd_backlight_mode in sysfs.
+
+Modes (kbd_type 2):
+  0x10 (16) = OFF
+  0x8  (8)  = ON
+  0x2  (2)  = AUTO
+Cycle order: OFF -> ON -> AUTO -> OFF
+
+Requires root (reads /dev/input/event* and writes sysfs). Intended to run as
+a systemd system service.
+"""
+
+import os
+import sys
+import time
+import signal
+import logging
+
+try:
+    from evdev import InputDevice, ecodes, list_devices, categorize
+except ImportError:
+    sys.exit("python-evdev is required: pacman -S python-evdev")
+
+LOG = logging.getLogger("dynabook-kbdbacklightd")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+SYSFS_BASE = "/sys/devices/LNXSYSTM:00/LNXSYBUS:00/DNBK0001:00"
+MODE_PATH = os.path.join(SYSFS_BASE, "kbd_backlight_mode")
+
+# cycle: OFF(0x10) -> ON(0x8) -> AUTO(0x2) -> OFF ...
+CYCLE = [0x10, 0x8, 0x2]
+
+def read_mode():
+    try:
+        with open(MODE_PATH) as f:
+            return int(f.read().strip(), 0)
+    except Exception as e:
+        LOG.warning("cannot read %s: %s", MODE_PATH, e)
+        return None
+
+def write_mode(mode):
+    try:
+        with open(MODE_PATH, "w") as f:
+            f.write("0x%x\n" % mode)
+        LOG.info("kbd_backlight_mode -> 0x%x", mode)
+        return True
+    except Exception as e:
+        LOG.error("cannot write %s: %s", MODE_PATH, e)
+        return False
+
+def next_mode(current):
+    if current in CYCLE:
+        i = CYCLE.index(current)
+        return CYCLE[(i + 1) % len(CYCLE)]
+    # unknown/edge case: start at ON
+    return 0x8
+
+def find_toshiba_device():
+    for path in list_devices():
+        try:
+            dev = InputDevice(path)
+            if dev.name == "Toshiba input device":
+                return dev
+        except Exception:
+            continue
+    return None
+
+def main():
+    dev = find_toshiba_device()
+    if dev is None:
+        LOG.error("Toshiba input device not found; is toshiba_acpi loaded?")
+        sys.exit(1)
+    LOG.info("listening on %s (%s)", dev.path, dev.name)
+
+    # Passive listener: do NOT grab, so GNOME OSD still works.
+    last_toggle = 0.0
+    DEBOUNCE = 0.15  # ignore repeats within 150ms
+
+    running = True
+    def handle_term(signum, frame):
+        nonlocal running
+        running = False
+    signal.signal(signal.SIGTERM, handle_term)
+    signal.signal(signal.SIGINT, handle_term)
+
+    try:
+        for event in dev.read_loop():
+            if not running:
+                break
+            if event.type != ecodes.EV_KEY:
+                continue
+            if event.code != ecodes.KEY_KBDILLUMTOGGLE:
+                continue
+            if event.value != 1:  # only act on press, not release
+                continue
+            now = time.time()
+            if now - last_toggle < DEBOUNCE:
+                continue
+            last_toggle = now
+            cur = read_mode()
+            nxt = next_mode(cur if cur is not None else 0x10)
+            write_mode(nxt)
+    finally:
+        dev.close()
+        LOG.info("exiting")
+
+if __name__ == "__main__":
+    main()

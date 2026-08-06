@@ -66,6 +66,38 @@ sudo dkms install -m toshiba_acpi_dynabook -v 0.24
 sudo modprobe toshiba_acpi
 ```
 
+## Keyboard-backlight Fn key (userspace daemon)
+
+The kernel driver delivers `KEY_KBDILLUMTOGGLE` (scancode `0x12c`) correctly,
+but GNOME only shows the on-screen indicator and does not actually toggle the
+LED — and `toshiba_acpi` does not toggle the backlight itself. So a small
+**passive** daemon (`daemon/dynabook-kbdbacklightd`) listens for that keycode
+and cycles the backlight mode (`OFF -> ON -> AUTO`) by writing
+`kbd_backlight_mode` in sysfs. It does not grab the device, so GNOME's OSD
+still appears.
+
+Install and enable:
+
+```sh
+sudo cp daemon/dynabook-kbdbacklightd /usr/local/bin/
+sudo chmod +x /usr/local/bin/dynabook-kbdbacklightd
+sudo cp daemon/dynabook-kbdbacklightd.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now dynabook-kbdbacklightd
+```
+
+Requires `python-evdev` (e.g. `sudo pacman -S python-evdev`). The daemon runs
+as root (it reads `/dev/input/event*` and writes sysfs). Verify:
+
+```sh
+systemctl status dynabook-kbdbacklightd
+# press the keyboard-backlight Fn key; mode should cycle:
+cat /sys/devices/LNXSYSTM:00/LNXSYBUS:00/DNBK0001:00/kbd_backlight_mode
+```
+
+> **Note:** set the keyboard-backlight to **OS-controlled** in the BIOS,
+> otherwise the firmware timer owns the LED and the OS writes are ignored.
+
 > **Note for CachyOS / clang-built kernels:** the module must be built with
 > `LLVM=1` (the `dkms.conf` in this repo already does this automatically). A
 > plain gcc build fails with `-mstack-alignment` errors on clang kernels.
@@ -99,11 +131,27 @@ echo 8    | sudo tee "$BACKLIGHT/kbd_backlight_timeout"
 `AUTOINSTALL=yes` in `dkms.conf` means the module auto-rebuilds on every
 kernel update.
 
+## Files
+
+- `dkms/` — patched `toshiba_acpi.c` + `dkms.conf` (ready to copy to
+  `/usr/src/toshiba_acpi_dynabook-0.24`).
+- `daemon/` — `dynabook-kbdbacklightd` (passive Fn-key toggle daemon) +
+  its systemd unit.
+- `submission/` — *(not required to install)* the two standalone kernel
+  patches + cover letter, formatted for `git send-email` upstream.
+- `investigation.md` — full root-cause analysis, evidence trail, and ACPI
+  disassembly notes.
+
 ## Remove
 
+To remove everything:
+
 ```sh
+sudo systemctl disable --now dynabook-kbdbacklightd
+sudo rm /etc/systemd/system/dynabook-kbdbacklightd.service
+sudo rm /usr/local/bin/dynabook-kbdbacklightd
 dkms remove -m toshiba_acpi_dynabook -v 0.24 --all
-depmod -a
+sudo depmod -a
 ```
 
 ## Upstream
