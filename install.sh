@@ -9,6 +9,7 @@ echo "==> Installing DKMS source to $DEST"
 mkdir -p "$DEST"
 cp "$SRC_DIR/toshiba_acpi.c" "$DEST/"
 cp "$SRC_DIR/dkms.conf"       "$DEST/"
+cp "$SRC_DIR/Makefile"        "$DEST/"
 
 echo "==> dkms add/build/install"
 dkms add    -m toshiba_acpi_dynabook -v 0.24

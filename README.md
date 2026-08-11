@@ -60,6 +60,7 @@ cd dynabook-x40k-acpi
 sudo mkdir -p /usr/src/toshiba_acpi_dynabook-0.24
 sudo cp dkms/toshiba_acpi.c /usr/src/toshiba_acpi_dynabook-0.24/
 sudo cp dkms/dkms.conf     /usr/src/toshiba_acpi_dynabook-0.24/
+sudo cp dkms/Makefile      /usr/src/toshiba_acpi_dynabook-0.24/
 sudo dkms add    -m toshiba_acpi_dynabook -v 0.24
 sudo dkms build  -m toshiba_acpi_dynabook -v 0.24
 sudo dkms install -m toshiba_acpi_dynabook -v 0.24
