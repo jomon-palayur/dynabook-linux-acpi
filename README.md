@@ -134,12 +134,12 @@ kernel update.
 
 ## Files
 
-- `dkms/` — patched `toshiba_acpi.c` + `dkms.conf` (ready to copy to
-  `/usr/src/toshiba_acpi_dynabook-0.24`).
+- `dkms/` — patched `toshiba_acpi.c` + `dkms.conf` + `Makefile`
+  (ready to copy to `/usr/src/toshiba_acpi_dynabook-0.24`).
 - `daemon/` — `dynabook-kbdbacklightd` (passive Fn-key toggle daemon) +
   its systemd unit.
 - `submission/` — *(not required to install)* the two standalone kernel
-  patches + cover letter, formatted for `git send-email` upstream.
+  patches + cover letter, formatted for upstream submission.
 - `investigation.md` — full root-cause analysis, evidence trail, and ACPI
   disassembly notes.
 
@@ -154,22 +154,5 @@ sudo rm /usr/local/bin/dynabook-kbdbacklightd
 dkms remove -m toshiba_acpi_dynabook -v 0.24 --all
 sudo depmod -a
 ```
-
-## Upstream
-
-These patches should be submitted to `platform-driver-x86@vger.kernel.org`
-(maintainer: Hans de Goede / Ilpo Järvinen). Once merged into the mainline
-kernel, this whole repo becomes unnecessary — the stock `toshiba_acpi` will
-just work on dynabook hardware. The standalone, `git send-email`-ready diffs
-and cover letter live in `submission/` (kept out of the install path on
-purpose). Until then, the DKMS module here is the portable workaround and
-survives kernel updates automatically (`AUTOINSTALL=yes`).
-
-## Files
-
-- `dkms/` — patched `toshiba_acpi.c` + `dkms.conf` (ready to copy to
-  `/usr/src/toshiba_acpi_dynabook-0.24`).
-- `submission/` — *(not required to install)* the two standalone kernel
-  patches + cover letter, formatted for `git send-email` upstream.
 - `investigation.md` — full root-cause analysis, evidence trail, and ACPI
   disassembly notes.
