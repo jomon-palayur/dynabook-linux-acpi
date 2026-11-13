@@ -47,7 +47,7 @@ recompiling by hand.
 **Easy way** — use the included script:
 
 ```sh
-git clone https://github.com/<you>/dynabook-x40k-acpi.git
+git clone https://github.com/jomon-palayur/dynabook-x40k-acpi.git
 cd dynabook-x40k-acpi
 sudo ./install.sh
 ```
