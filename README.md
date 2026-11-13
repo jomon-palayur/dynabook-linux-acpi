@@ -29,41 +29,49 @@ rapid presses: the driver's `info_supported` hotkey path read the event FIFO
 only **once per Notify**, while the EC enqueues a press + release pair per key
 and coalesces rapid presses. Leftover entries replayed on later keypresses.
 
+A third issue appeared with Linux 7.3: the kernel removed `device_class` and
+`device_name` from `struct acpi_device_pnp`, breaking the
+`acpi_bus_generate_netlink_event()` calls in `toshiba_acpi.c`.
+
 ## Fixes
 
-Two minimal, upstream-friendly patches (in `submission/`):
+Three minimal, upstream-friendly patches (in `submission/`):
 
 1. `0001-toshiba_acpi-add-DNBK0001.patch` — add `DNBK0001` to the driver's
    ACPI match table (one line).
 2. `0002-toshiba_acpi-drain-INFO-FIFO-on-hotkey-Notify.patch` — drain the
    entire INFO FIFO per SCI Notify (loop until empty), mirroring the
    driver's existing `HCI_SYSTEM_EVENT` path.
+3. `0003-toshiba_acpi-fix-device_class-removal.patch` — add kernel version
+   guards for Linux 7.3+ where `acpi_device_pnp` lost `device_class`; pass
+   `""` on newer kernels, preserve old member access on older kernels.
 
-Both are bundled as a DKMS module so they survive kernel updates without
-recompiling by hand.
+All three are bundled as a DKMS module so they survive kernel updates without
+recompiling by hand. The module auto-detects clang-built kernels (CachyOS,
+Fedora) via `LLVM=1` in `dkms.conf`.
 
 ## Install (as root)
 
-**Easy way** — use the included script:
+**Easy way** — use the included script (reads version from `dkms.conf`):
 
 ```sh
-git clone https://github.com/jomon-palayur/dynabook-x40k-acpi.git
-cd dynabook-x40k-acpi
+git clone https://github.com/jomon-palayur/dynabook-linux-acpi.git
+cd dynabook-linux-acpi
 sudo ./install.sh
 ```
 
 **Manual way:**
 
 ```sh
-git clone https://github.com/<you>/dynabook-x40k-acpi.git
-cd dynabook-x40k-acpi
-sudo mkdir -p /usr/src/toshiba_acpi_dynabook-0.24
-sudo cp dkms/toshiba_acpi.c /usr/src/toshiba_acpi_dynabook-0.24/
-sudo cp dkms/dkms.conf     /usr/src/toshiba_acpi_dynabook-0.24/
-sudo cp dkms/Makefile      /usr/src/toshiba_acpi_dynabook-0.24/
-sudo dkms add    -m toshiba_acpi_dynabook -v 0.24
-sudo dkms build  -m toshiba_acpi_dynabook -v 0.24
-sudo dkms install -m toshiba_acpi_dynabook -v 0.24
+git clone https://github.com/jomon-palayur/dynabook-linux-acpi.git
+cd dynabook-linux-acpi
+sudo mkdir -p /usr/src/toshiba_acpi_dynabook-0.25
+sudo cp dkms/toshiba_acpi.c /usr/src/toshiba_acpi_dynabook-0.25/
+sudo cp dkms/dkms.conf     /usr/src/toshiba_acpi_dynabook-0.25/
+sudo cp dkms/Makefile      /usr/src/toshiba_acpi_dynabook-0.25/
+sudo dkms add    -m toshiba_acpi_dynabook -v 0.25
+sudo dkms build  -m toshiba_acpi_dynabook -v 0.25
+sudo dkms install -m toshiba_acpi_dynabook -v 0.25
 sudo modprobe toshiba_acpi
 ```
 
@@ -77,7 +85,7 @@ and cycles the backlight mode (`OFF -> ON -> AUTO`) by writing
 `kbd_backlight_mode` in sysfs. It does not grab the device, so GNOME's OSD
 still appears.
 
-Install and enable:
+Install and enable (also done by `install.sh`):
 
 ```sh
 sudo cp daemon/dynabook-kbdbacklightd /usr/local/bin/
@@ -87,8 +95,8 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now dynabook-kbdbacklightd
 ```
 
-Requires `python-evdev` (e.g. `sudo pacman -S python-evdev`). The daemon runs
-as root (it reads `/dev/input/event*` and writes sysfs). Verify:
+Requires `python-evdev` (e.g. `sudo dnf install python3-evdev` or `sudo pacman -S python-evdev`).
+The daemon runs as root (it reads `/dev/input/event*` and writes sysfs). Verify:
 
 ```sh
 systemctl status dynabook-kbdbacklightd
@@ -135,10 +143,10 @@ kernel update.
 ## Files
 
 - `dkms/` — patched `toshiba_acpi.c` + `dkms.conf` + `Makefile`
-  (ready to copy to `/usr/src/toshiba_acpi_dynabook-0.24`).
+  (ready to copy to `/usr/src/toshiba_acpi_dynabook-0.25`).
 - `daemon/` — `dynabook-kbdbacklightd` (passive Fn-key toggle daemon) +
   its systemd unit.
-- `submission/` — *(not required to install)* the two standalone kernel
+- `submission/` — *(not required to install)* the three standalone kernel
   patches + cover letter, formatted for upstream submission.
 - `investigation.md` — full root-cause analysis, evidence trail, and ACPI
   disassembly notes.
@@ -151,8 +159,6 @@ To remove everything:
 sudo systemctl disable --now dynabook-kbdbacklightd
 sudo rm /etc/systemd/system/dynabook-kbdbacklightd.service
 sudo rm /usr/local/bin/dynabook-kbdbacklightd
-dkms remove -m toshiba_acpi_dynabook -v 0.24 --all
+dkms remove -m toshiba_acpi_dynabook -v 0.25 --all
 sudo depmod -a
 ```
-- `investigation.md` — full root-cause analysis, evidence trail, and ACPI
-  disassembly notes.

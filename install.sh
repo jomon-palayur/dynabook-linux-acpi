@@ -5,13 +5,16 @@
 set -e
 
 SRC_DIR="$(cd "$(dirname "$0")/dkms" && pwd)"
-DEST="/usr/src/toshiba_acpi_dynabook-0.24"
+DKMS_CONF="$SRC_DIR/dkms.conf"
+PACKAGE_NAME=$(grep '^PACKAGE_NAME=' "$DKMS_CONF" | cut -d'"' -f2)
+PACKAGE_VERSION=$(grep '^PACKAGE_VERSION=' "$DKMS_CONF" | cut -d'"' -f2)
+DEST="/usr/src/${PACKAGE_NAME}-${PACKAGE_VERSION}"
 
 echo "==> Installing DKMS source to $DEST"
 # Remove any existing version to avoid DKMS add errors
-if dkms status | grep -q "toshiba_acpi_dynabook"; then
-    echo "Removing existing toshiba_acpi_dynabook module from DKMS..."
-    dkms remove -m toshiba_acpi_dynabook -v 0.24 --all || true
+if dkms status | grep -q "$PACKAGE_NAME"; then
+    echo "Removing existing $PACKAGE_NAME module from DKMS..."
+    dkms remove -m "$PACKAGE_NAME" -v "$PACKAGE_VERSION" --all || true
 fi
 
 mkdir -p "$DEST"
@@ -20,9 +23,9 @@ cp "$SRC_DIR/dkms.conf"       "$DEST/"
 cp "$SRC_DIR/Makefile"        "$DEST/"
 
 echo "==> dkms add/build/install"
-dkms add    -m toshiba_acpi_dynabook -v 0.24
-dkms build  -m toshiba_acpi_dynabook -v 0.24
-dkms install -m toshiba_acpi_dynabook -v 0.24
+dkms add    -m "$PACKAGE_NAME" -v "$PACKAGE_VERSION"
+dkms build  -m "$PACKAGE_NAME" -v "$PACKAGE_VERSION"
+dkms install -m "$PACKAGE_NAME" -v "$PACKAGE_VERSION"
 
 echo "==> Loading module"
 modprobe toshiba_acpi || true

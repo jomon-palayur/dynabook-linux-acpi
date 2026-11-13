@@ -19,12 +19,13 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
-#define TOSHIBA_ACPI_VERSION	"0.24"
+#define TOSHIBA_ACPI_VERSION	"0.25"
 #define PROC_INTERFACE_VERSION	1
 
 #include <linux/compiler.h>
 #include <linux/dmi.h>
 #include <linux/kernel.h>
+#include <linux/version.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/init.h>
@@ -2506,9 +2507,15 @@ static void toshiba_acpi_kbd_bl_work(struct work_struct *work)
 				LED_FULL : LED_OFF);
 
 	/* Emulate the keyboard backlight event */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
+	acpi_bus_generate_netlink_event("",
+					dev_name(&toshiba_acpi->acpi_dev->dev),
+					0x92, 0);
+#else
 	acpi_bus_generate_netlink_event(toshiba_acpi->acpi_dev->pnp.device_class,
 					dev_name(&toshiba_acpi->acpi_dev->dev),
 					0x92, 0);
+#endif
 }
 
 /*
@@ -3267,10 +3274,17 @@ static void toshiba_acpi_notify(acpi_handle handle, u32 event, void *data)
 		break;
 	}
 
+	#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
+	acpi_bus_generate_netlink_event("",
+					dev_name(&acpi_dev->dev),
+					event, (event == 0x80) ?
+					dev->last_key_event : 0);
+#else
 	acpi_bus_generate_netlink_event(acpi_dev->pnp.device_class,
 					dev_name(&acpi_dev->dev),
 					event, (event == 0x80) ?
 					dev->last_key_event : 0);
+#endif
 }
 
 static void toshiba_acpi_remove(struct platform_device *pdev)
