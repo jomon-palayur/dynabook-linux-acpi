@@ -1,0 +1,59 @@
+From: jomon <jomon@local>
+Subject: [PATCH 3/3] platform/x86: toshiba_acpi: fix acpi_bus_generate_netlink_event for kernel 7.3+ device_class removal
+
+Linux 7.3 removed device_class and device_name fields from struct
+acpi_device_pnp (commit "ACPI: bus: Drop two fields from struct
+acpi_device_pnp"). The acpi_bus_generate_netlink_event() function now
+takes a const char* device_class parameter directly, and upstream
+drivers pass an empty string.
+
+Add kernel version guards to pass "" on 7.3+ kernels while preserving
+the old device_class member access on older kernels. Also include
+linux/version.h for LINUX_VERSION_CODE and KERNEL_VERSION macros.
+
+Signed-off-by: jomon <jomon@local>
+---
+ drivers/platform/x86/toshiba_acpi.c | 26 ++++++++++++++++++++++++--
+ 1 file changed, 24 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/platform/x86/toshiba_acpi.c b/drivers/platform/x86/toshiba_acpi.c
+index 3333333..4444444 100644
+--- a/drivers/platform/x86/toshiba_acpi.c
++++ b/drivers/platform/x86/toshiba_acpi.c
+@@ -25,6 +25,7 @@
+ #include <linux/kernel.h>
++#include <linux/version.h>
+ #include <linux/module.h>
+ #include <linux/moduleparam.h>
+ #include <linux/init.h>
+@@ -2505,7 +2506,16 @@ static void toshiba_acpi_kbd_bl_work(struct work_struct *work)
+ 	}
+ 
+ 	/* Emulate the keyboard backlight event */
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
+ 	acpi_bus_generate_netlink_event("",
+ 					dev_name(&toshiba_acpi->acpi_dev->dev),
+ 					0x92, 0);
++#else
++	acpi_bus_generate_netlink_event(toshiba_acpi->acpi_dev->pnp.device_class,
++					dev_name(&toshiba_acpi->acpi_dev->dev),
++					0x92, 0);
++#endif
+ }
+ 
+@@ -3267,7 +3277,16 @@ static void toshiba_acpi_notify(acpi_handle handle, u32 event, void *data)
+ 	}
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
+ 	acpi_bus_generate_netlink_event("",
+ 					dev_name(&acpi_dev->dev),
+ 					event, (event == 0x80) ?
+ 					dev->last_key_event : 0);
++#else
++	acpi_bus_generate_netlink_event(acpi_dev->pnp.device_class,
++					dev_name(&acpi_dev->dev),
++					event, (event == 0x80) ?
++					dev->last_key_event : 0);
++#endif
+ }
++

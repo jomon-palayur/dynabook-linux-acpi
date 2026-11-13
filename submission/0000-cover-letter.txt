@@ -1,0 +1,30 @@
+From: jomon <jomon@local>
+Subject: [PATCH 0/3] platform/x86: toshiba_acpi: Dynabook DNBK0001 support + FIFO drain + kernel 7.3 compat
+
+This series adds support for Dynabook laptops (spun-off Toshiba PC division)
+that ship the rebranded Toshiba HCI/SCI firmware under ACPI ID DNBK0001.
+
+Patch 1 adds DNBK0001 to the driver's ACPI match table so the driver binds
+on Dynabook hardware (e.g., Portege X40-K).
+
+Patch 2 fixes a hotkey FIFO drain bug on info_supported machines: the driver
+read the EC event FIFO only once per SCI Notify, leaving stale entries that
+replayed on later keypresses causing hotkey functions to "bleed" into one
+another. The fix drains the entire FIFO per Notify, matching the existing
+HCI_SYSTEM_EVENT path semantics.
+
+Patch 3 adds kernel version guards for Linux 7.3+ where struct
+acpi_device_pnp had device_class and device_name fields removed. The
+acpi_bus_generate_netlink_event() calls now pass an empty string on
+newer kernels, while preserving the old device_class usage on older kernels.
+
+Tested on Dynabook Portege X40-K with kernel 7.3.3 (Fedora 45).
+
+jomon (3):
+  platform/x86: toshiba_acpi: add DNBK0001 to the ACPI match table
+  platform/x86: toshiba_acpi: drain INFO FIFO on each hotkey Notify
+  platform/x86: toshiba_acpi: fix acpi_bus_generate_netlink_event for
+    kernel 7.3+ device_class removal
+
+ drivers/platform/x86/toshiba_acpi.c | 35 +++++++++++++++++++++++++++++-----
+ 1 file changed, 30 insertions(+), 5 deletions(-)

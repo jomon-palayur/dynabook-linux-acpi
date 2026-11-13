@@ -1,0 +1,68 @@
+From: jomon <jomon@local>
+Subject: [PATCH 2/3] platform/x86: toshiba_acpi: drain INFO FIFO on each hotkey Notify
+
+On info_supported machines, toshiba_acpi_process_hotkeys() reads the EC
+event FIFO (the INFO method) only ONCE per SCI Notify, then returns. The
+HCI_SYSTEM_EVENT path, by contrast, loops until TOS_FIFO_EMPTY.
+
+The EC enqueues a press entry (0x14x) and a companion/release entry (0x1Cx)
+for every physical hotkey, and may coalesce multiple keys into fewer Notify
+events. Reading a single entry per Notify leaves stale entries in the ring
+that are replayed on a later keypress, causing hotkey functions to "bleed"
+into one another / persist across presses (e.g. pressing brightness-up is
+interpreted as brightness-down for the next few presses).
+
+Fix by draining the entire FIFO on each Notify (loop until INFO returns 0,
+i.e. the ring is empty), matching the semantics of the HCI_SYSTEM_EVENT
+drain. All FIFO codes on affected hardware are unique per key, so draining
+cannot drop a legitimate event.
+
+Verified on a Dynabook Portege X40-K: rapid mixed brightness Up/Down and
+keyboard-backlight toggle presses now behave correctly with no lag or
+cross-talk.
+
+Signed-off-by: jomon <jomon@local>
+---
+ drivers/platform/x86/toshiba_acpi.c | 18 ++++++++++++++----
+ 1 file changed, 14 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/platform/x86/toshiba_acpi.c b/drivers/platform/x86/toshiba_acpi.c
+index 2222222..3333333 100644
+--- a/drivers/platform/x86/toshiba_acpi.c
++++ b/drivers/platform/x86/toshiba_acpi.c
+@@ -2822,10 +2822,20 @@ static void toshiba_acpi_process_hotkeys(struct toshiba_acpi_dev *dev)
+ {
+ 	if (dev->info_supported) {
+-		int scancode = toshiba_acpi_query_hotkey(dev);
+-
+-		if (scancode < 0) {
+-			pr_err("Failed to query hotkey event\n");
+-		} else if (scancode != 0) {
++		/*
++		 * Drain the entire INFO FIFO on each SCI Notify. The EC may
++		 * enqueue a press (0x14x) and a companion/release (0x1Cx)
++		 * entry per physical key, and may coalesce multiple keys
++		 * into fewer Notify events. Reading only one entry per
++		 * Notify leaves stale entries in the ring that get replayed
++		 * on a later keypress (key functions "bleeding" into each
++		 * other / persisting across presses). Loop until INFO
++		 * returns 0 (ring empty), matching the HCI_SYSTEM_EVENT
++		 * path's TOS_FIFO_EMPTY drain semantics.
++		 */
++		for (;;) {
++			int scancode = toshiba_acpi_query_hotkey(dev);
++
++			if (scancode < 0) {
++				pr_err("Failed to query hotkey event\n");
++				break;
++			}
++			if (scancode == 0)
++				break;	/* FIFO empty */
+ 
+ 			toshiba_acpi_report_hotkey(dev, scancode);
+ 			dev->key_event_valid = 1;
+ 			dev->last_key_event = scancode;
+-		}
++		}
+ 		} else if (dev->system_event_supported) {
+	+
