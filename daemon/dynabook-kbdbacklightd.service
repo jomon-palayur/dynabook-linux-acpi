@@ -1,12 +1,12 @@
 [Unit]
 Description=Dynabook keyboard-backlight Fn-key toggle daemon
-Documentation=https://github.com/<you>/dynabook-x40k-acpi
+Documentation=https://github.com/jomon-palayur/dynabook-linux-acpi
 After=systemd-modules-load.service
-ConditionPathExists=/sys/devices/LNXSYSTM:00/LNXSYBUS:00/DNBK0001:00
+ConditionPathExists=/sys/bus/acpi/devices/DNBK0001:00
 
 [Service]
 Type=simple
-ExecStartPre=/bin/sh -c 'until grep -rl "Toshiba input device" /sys/class/input/*/name 2>/dev/null; do sleep 0.5; done'
+ExecStartPre=/usr/bin/timeout 30s /bin/sh -c 'until grep -rl "Toshiba input device" /sys/class/input/*/name 2>/dev/null; do sleep 0.5; done'
 ExecStart=/usr/local/bin/dynabook-kbdbacklightd
 Restart=on-failure
 RestartSec=2

@@ -13,12 +13,13 @@ replayed on later keypresses causing hotkey functions to "bleed" into one
 another. The fix drains the entire FIFO per Notify, matching the existing
 HCI_SYSTEM_EVENT path semantics.
 
-Patch 3 adds kernel version guards for Linux 7.3+ where struct
-acpi_device_pnp had device_class and device_name fields removed. The
-acpi_bus_generate_netlink_event() calls now pass an empty string on
-newer kernels, while preserving the old device_class usage on older kernels.
+Patch 3 provides compatibility guards for Linux 7.3+ where struct
+acpi_device_pnp had device_class and device_name fields removed. For an
+in-tree upstream submission targeted at linux-next/HEAD, Patches 1 and 2
+apply directly; Patch 3 is provided for out-of-tree / cross-kernel DKMS builds.
 
-Tested on Dynabook Portege X40-K with kernel 7.3.3 (Fedora 45).
+Tested on Dynabook Portege X40-K with kernel 7.3.3 (Fedora 45) and kernel
+7.2.15.
 
 jomon (3):
   platform/x86: toshiba_acpi: add DNBK0001 to the ACPI match table

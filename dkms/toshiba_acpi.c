@@ -28,6 +28,24 @@
 #include <linux/version.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0)
+static inline int acpi_dev_install_notify_handler(struct acpi_device *adev,
+						  u32 handler_type,
+						  acpi_notify_handler handler,
+						  void *context)
+{
+	return acpi_install_notify_handler(adev->handle, handler_type,
+					   handler, context);
+}
+
+static inline void acpi_dev_remove_notify_handler(struct acpi_device *adev,
+						  u32 handler_type,
+						  acpi_notify_handler handler)
+{
+	acpi_remove_notify_handler(adev->handle, handler_type, handler);
+}
+#endif
 #include <linux/init.h>
 #include <linux/types.h>
 #include <linux/proc_fs.h>
@@ -3274,7 +3292,7 @@ static void toshiba_acpi_notify(acpi_handle handle, u32 event, void *data)
 		break;
 	}
 
-	#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
 	acpi_bus_generate_netlink_event("",
 					dev_name(&acpi_dev->dev),
 					event, (event == 0x80) ?
@@ -3648,9 +3666,23 @@ static int toshiba_acpi_resume(struct device *device)
 static SIMPLE_DEV_PM_OPS(toshiba_acpi_pm,
 			 toshiba_acpi_suspend, toshiba_acpi_resume);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 18, 0)
+static int toshiba_acpi_remove_legacy(struct platform_device *pdev)
+{
+	toshiba_acpi_remove(pdev);
+	return 0;
+}
+#endif
+
 static struct platform_driver toshiba_acpi_driver = {
 	.probe = toshiba_acpi_probe,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0)
 	.remove = toshiba_acpi_remove,
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(5, 18, 0)
+	.remove_new = toshiba_acpi_remove,
+#else
+	.remove = toshiba_acpi_remove_legacy,
+#endif
 	.driver = {
 		.name = "Toshiba ACPI driver",
 		.acpi_match_table = toshiba_device_ids,

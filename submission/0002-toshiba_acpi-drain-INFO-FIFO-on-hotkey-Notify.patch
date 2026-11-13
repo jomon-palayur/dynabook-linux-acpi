@@ -58,11 +58,10 @@ index 2222222..3333333 100644
 +			}
 +			if (scancode == 0)
 +				break;	/* FIFO empty */
- 
++
  			toshiba_acpi_report_hotkey(dev, scancode);
  			dev->key_event_valid = 1;
  			dev->last_key_event = scancode;
 -		}
 +		}
- 		} else if (dev->system_event_supported) {
-	+
+ 	} else if (dev->system_event_supported) {

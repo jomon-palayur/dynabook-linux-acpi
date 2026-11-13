@@ -2,119 +2,227 @@
 """
 dynabook-kbdbacklightd
 
-On the Dynabook Portege X40-K the firmware delivers KEY_KBDILLUMTOGGLE (228)
-correctly via the "Toshiba input device", but nothing acts on it: GNOME only
-shows the OSD and the toshiba_acpi driver does not toggle the backlight
-itself. This daemon passively listens for that keycode and cycles the
-keyboard-backlight mode through OFF -> ON -> AUTO.
+On Dynabook laptops (e.g. Portégé X40-K), the firmware delivers KEY_KBDILLUMTOGGLE
+(scancode 0x12c / keycode 228) via the "Toshiba input device". However, desktop
+environments (like GNOME) only display an OSD and do not toggle the backlight,
+while toshiba_acpi does not toggle it internally.
 
-Passive (non-grab) evdev reader: it does NOT consume the event, so GNOME's
-OSD still appears. It merely performs the actual hardware toggle by writing
-kbd_backlight_mode in sysfs.
+This daemon passively listens for that keycode and cycles through the keyboard
+backlight modes (OFF -> ON -> AUTO -> OFF) by updating sysfs.
 
-Modes (kbd_type 2):
-  0x10 (16) = OFF
-  0x8  (8)  = ON
-  0x2  (2)  = AUTO
-Cycle order: OFF -> ON -> AUTO -> OFF
-
-Requires root (reads /dev/input/event* and writes sysfs). Intended to run as
-a systemd system service.
+Design highlights:
+- Passive (non-exclusive) evdev listener: does NOT grab the device, allowing
+  desktop OSD indicators to continue displaying.
+- Dynamic sysfs path resolution: supports /sys/bus/acpi/devices/DNBK0001:00,
+  glob discovery, and legacy device paths across all distributions.
+- Dynamic mode detection: reads available_kbd_modes to support both Type 1
+  (FNZ/AUTO) and Type 2 (OFF/ON/AUTO) keyboards.
+- Auto-reconnect: gracefully handles suspend/resume, device unbinds, and module
+  reloads without crashing.
 """
 
 import os
 import sys
 import time
+import glob
 import signal
 import logging
 
 try:
-    from evdev import InputDevice, ecodes, list_devices, categorize
+    from evdev import InputDevice, ecodes, list_devices
 except ImportError:
-    sys.exit("python-evdev is required: pacman -S python-evdev")
+    sys.exit(
+        "ERROR: python-evdev is required.\n"
+        "Install via package manager:\n"
+        "  Fedora/RHEL: sudo dnf install python3-evdev\n"
+        "  Debian/Ubuntu: sudo apt-get install python3-evdev\n"
+        "  Arch/CachyOS: sudo pacman -S python-evdev\n"
+        "  openSUSE: sudo zypper install python3-evdev"
+    )
 
 LOG = logging.getLogger("dynabook-kbdbacklightd")
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 
-SYSFS_BASE = "/sys/devices/LNXSYSTM:00/LNXSYBUS:00/DNBK0001:00"
-MODE_PATH = os.path.join(SYSFS_BASE, "kbd_backlight_mode")
+# Standard fallback cycle for Type 2 keyboards: OFF (0x10) -> ON (0x8) -> AUTO (0x2)
+DEFAULT_CYCLE_TYPE2 = [0x10, 0x8, 0x2]
+# Standard fallback cycle for Type 1 keyboards: FNZ (0x1) -> AUTO (0x2)
+DEFAULT_CYCLE_TYPE1 = [0x1, 0x2]
 
-# cycle: OFF(0x10) -> ON(0x8) -> AUTO(0x2) -> OFF ...
-CYCLE = [0x10, 0x8, 0x2]
 
-def read_mode():
+def find_sysfs_device_dir():
+    """Locate the sysfs directory containing kbd_backlight_mode."""
+    candidates = [
+        "/sys/bus/acpi/devices/DNBK0001:00",
+        "/sys/devices/LNXSYSTM:00/LNXSYBUS:00/DNBK0001:00",
+    ]
+    for path in candidates:
+        if os.path.isfile(os.path.join(path, "kbd_backlight_mode")):
+            return path
+
+    # Dynamic search across ACPI devices
+    for match in glob.glob("/sys/bus/acpi/devices/*DNBK*"):
+        if os.path.isfile(os.path.join(match, "kbd_backlight_mode")):
+            return match
+
+    for match in glob.glob("/sys/devices/**/DNBK0001:00", recursive=True):
+        if os.path.isfile(os.path.join(match, "kbd_backlight_mode")):
+            return match
+
+    return None
+
+
+def get_mode_cycle(device_dir):
+    """Determine the cycle order based on available_kbd_modes."""
+    if not device_dir:
+        return DEFAULT_CYCLE_TYPE2
+
+    modes_file = os.path.join(device_dir, "available_kbd_modes")
     try:
-        with open(MODE_PATH) as f:
+        with open(modes_file, "r") as f:
+            raw_modes = f.read().strip().split()
+            supported = [int(m, 0) for m in raw_modes]
+
+            # If Type 2 modes (0x10, 0x8, 0x2) are supported
+            if 0x10 in supported and 0x8 in supported and 0x2 in supported:
+                return [0x10, 0x8, 0x2]
+            # If Type 1 modes (0x1, 0x2)
+            if 0x1 in supported and 0x2 in supported:
+                return [0x1, 0x2]
+            if supported:
+                return supported
+    except Exception as e:
+        LOG.debug("Could not read available_kbd_modes: %s", e)
+
+    return DEFAULT_CYCLE_TYPE2
+
+
+def read_mode(mode_path):
+    try:
+        with open(mode_path, "r") as f:
             return int(f.read().strip(), 0)
     except Exception as e:
-        LOG.warning("cannot read %s: %s", MODE_PATH, e)
+        LOG.warning("Cannot read mode from %s: %s", mode_path, e)
         return None
 
-def write_mode(mode):
+
+def write_mode(mode_path, mode):
     try:
-        with open(MODE_PATH, "w") as f:
+        with open(mode_path, "w") as f:
             f.write("0x%x\n" % mode)
-        LOG.info("kbd_backlight_mode -> 0x%x", mode)
+        mode_names = {0x10: "OFF", 0x8: "ON", 0x2: "AUTO", 0x1: "FNZ"}
+        name = mode_names.get(mode, "UNKNOWN")
+        LOG.info("kbd_backlight_mode -> 0x%x (%s)", mode, name)
         return True
     except Exception as e:
-        LOG.error("cannot write %s: %s", MODE_PATH, e)
+        LOG.error("Cannot write mode 0x%x to %s: %s", mode, mode_path, e)
         return False
 
-def next_mode(current):
-    if current in CYCLE:
-        i = CYCLE.index(current)
-        return CYCLE[(i + 1) % len(CYCLE)]
-    # unknown/edge case: start at ON
-    return 0x8
+
+def next_mode(current, cycle):
+    if current in cycle:
+        idx = cycle.index(current)
+        return cycle[(idx + 1) % len(cycle)]
+    return cycle[0] if cycle else 0x8
+
 
 def find_toshiba_device():
+    """Find the evdev input device registered by toshiba_acpi."""
     for path in list_devices():
         try:
             dev = InputDevice(path)
             if dev.name == "Toshiba input device":
                 return dev
+            dev.close()
         except Exception:
             continue
     return None
 
+
 def main():
-    dev = find_toshiba_device()
-    if dev is None:
-        LOG.error("Toshiba input device not found; is toshiba_acpi loaded?")
-        sys.exit(1)
-    LOG.info("listening on %s (%s)", dev.path, dev.name)
-
-    # Passive listener: do NOT grab, so GNOME OSD still works.
-    last_toggle = 0.0
-    DEBOUNCE = 0.15  # ignore repeats within 150ms
-
     running = True
-    def handle_term(signum, frame):
-        nonlocal running
-        running = False
-    signal.signal(signal.SIGTERM, handle_term)
-    signal.signal(signal.SIGINT, handle_term)
 
-    try:
-        for event in dev.read_loop():
-            if not running:
-                break
-            if event.type != ecodes.EV_KEY:
-                continue
-            if event.code != ecodes.KEY_KBDILLUMTOGGLE:
-                continue
-            if event.value != 1:  # only act on press, not release
-                continue
-            now = time.time()
-            if now - last_toggle < DEBOUNCE:
-                continue
-            last_toggle = now
-            cur = read_mode()
-            nxt = next_mode(cur if cur is not None else 0x10)
-            write_mode(nxt)
-    finally:
-        dev.close()
-        LOG.info("exiting")
+    def handle_signal(signum, frame):
+        nonlocal running
+        LOG.info("Caught termination signal (%s), shutting down...", signum)
+        running = False
+
+    signal.signal(signal.SIGTERM, handle_signal)
+    signal.signal(signal.SIGINT, handle_signal)
+
+    LOG.info("Starting Dynabook keyboard backlight daemon...")
+
+    last_toggle = 0.0
+    DEBOUNCE = 0.15  # 150ms debounce
+
+    while running:
+        # 1. Resolve sysfs paths
+        device_dir = find_sysfs_device_dir()
+        if not device_dir:
+            LOG.warning("Dynabook sysfs device not found. Is toshiba_acpi loaded? Retrying in 2s...")
+            time.sleep(2)
+            continue
+
+        mode_path = os.path.join(device_dir, "kbd_backlight_mode")
+        cycle = get_mode_cycle(device_dir)
+        LOG.info("Detected sysfs node: %s", mode_path)
+        LOG.info("Active mode cycle: %s", " -> ".join("0x%x" % m for m in cycle))
+
+        # 2. Locate input device
+        dev = find_toshiba_device()
+        while running and dev is None:
+            LOG.info("Waiting for 'Toshiba input device'...")
+            time.sleep(1)
+            dev = find_toshiba_device()
+
+        if not running:
+            if dev:
+                dev.close()
+            break
+
+        LOG.info("Listening on %s (%s)", dev.path, dev.name)
+
+        # 3. Event Loop
+        try:
+            for event in dev.read_loop():
+                if not running:
+                    break
+                if event.type != ecodes.EV_KEY:
+                    continue
+                if event.code != ecodes.KEY_KBDILLUMTOGGLE:
+                    continue
+                if event.value != 1:  # Only act on press, ignore release / autorepeat
+                    continue
+
+                now = time.time()
+                if now - last_toggle < DEBOUNCE:
+                    continue
+                last_toggle = now
+
+                cur = read_mode(mode_path)
+                if cur is None:
+                    # In case sysfs path shifted or device reset, re-probe
+                    device_dir = find_sysfs_device_dir()
+                    if device_dir:
+                        mode_path = os.path.join(device_dir, "kbd_backlight_mode")
+                        cur = read_mode(mode_path)
+
+                nxt = next_mode(cur, cycle)
+                write_mode(mode_path, nxt)
+        except OSError as e:
+            LOG.warning("Input device error (%s); connection lost. Re-probing in 2s...", e)
+            time.sleep(2)
+        finally:
+            try:
+                dev.close()
+            except Exception:
+                pass
+
+    LOG.info("Dynabook keyboard backlight daemon terminated cleanly.")
+
 
 if __name__ == "__main__":
     main()

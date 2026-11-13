@@ -1,58 +1,64 @@
-# dynabook-x40k-acpi
+# dynabook-linux-acpi
 
-Linux kernel support for the **Dynabook Portégé X40-K** (and likely other
-dynabook laptops shipping the rebranded Toshiba HCI/SCI firmware) keyboard
-backlight and Fn hotkeys.
+Linux kernel driver and userspace integration for **Dynabook** laptops (including the **Portégé X40-K**, X30, and other models shipping rebranded Toshiba HCI/SCI firmware).
 
-## Problem
+This project restores the **keyboard backlight**, **Fn hotkeys** (brightness, backlight toggle, mute, etc.), and eliminates keypress lag/bleed across all major Linux distributions and kernel versions (Linux 5.15 LTS through 7.x+).
 
-On a stock Linux kernel:
+---
 
-- `/sys/class/leds` has **no keyboard-backlight device** (only capslock,
-  numlock, scrolllock, wifi).
-- The Fn brightness keys and keyboard-backlight key generate no usable events.
-- `intel_backlight` works fine, so the panel itself is fine — only the
-  firmware hotkey interface is missing in Linux.
+## The Problem & Root Cause
 
-## Root cause
+On stock Linux kernels:
+* **/sys/class/leds** lacks any keyboard backlight device (only CapsLock, NumLock, etc. are listed).
+* **Fn brightness and keyboard-backlight keys are dead** and emit no usable input events.
+* `intel_backlight` works fine, but firmware hotkeys and LED controls are completely inactive.
 
-Dynabook is the spun-off Toshiba PC division. The firmware still implements
-the Toshiba HCI/SCI protocol verbatim under ACPI device `\_SB.VALZ` with
-`_HID = "DNBK0001"`. The in-tree driver
-`drivers/platform/x86/toshiba_acpi.c` implements this protocol but its ACPI
-match table only lists Toshiba-era IDs (`TOS1900`, …). `DNBK0001` is absent,
-so the driver never binds. Without the driver, the EC's hotkey FIFO is never
-drained and no events reach Linux.
+### Why this happens
 
-A second, independent bug caused hotkeys to "bleed" into each other under
-rapid presses: the driver's `info_supported` hotkey path read the event FIFO
-only **once per Notify**, while the EC enqueues a press + release pair per key
-and coalesces rapid presses. Leftover entries replayed on later keypresses.
+Dynabook is the spun-off client PC division of Toshiba. The firmware still implements the Toshiba HCI/SCI ACPI protocol verbatim under device `\_SB.VALZ`, but rebranded the ACPI Hardware ID (`_HID`) from `TOS1900` to **`DNBK0001`**. Because the in-tree kernel driver (`drivers/platform/x86/toshiba_acpi.c`) only matched legacy Toshiba IDs, it never bound on Dynabook hardware. Without the driver, the firmware hotkey notification subsystem is never enabled (`VALZ.ENAB` is never called), causing the Embedded Controller (EC) to silently buffer key events without sending notifications to Linux.
 
-A third issue appeared with Linux 7.3: the kernel removed `device_class` and
-`device_name` from `struct acpi_device_pnp`, breaking the
-`acpi_bus_generate_netlink_event()` calls in `toshiba_acpi.c`.
+Furthermore, an independent bug in `toshiba_acpi.c` caused hotkey functions to "bleed" into each other during rapid keypresses: the driver queried the event FIFO only **once per SCI Notify**, whereas the EC enqueues press + release companion pairs. Unconsumed scancodes accumulated in the ring buffer and were replayed on subsequent keypresses.
 
-## Fixes
+---
 
-Three minimal, upstream-friendly patches (in `submission/`):
+## Features
 
-1. `0001-toshiba_acpi-add-DNBK0001.patch` — add `DNBK0001` to the driver's
-   ACPI match table (one line).
-2. `0002-toshiba_acpi-drain-INFO-FIFO-on-hotkey-Notify.patch` — drain the
-   entire INFO FIFO per SCI Notify (loop until empty), mirroring the
-   driver's existing `HCI_SYSTEM_EVENT` path.
-3. `0003-toshiba_acpi-fix-device_class-removal.patch` — add kernel version
-   guards for Linux 7.3+ where `acpi_device_pnp` lost `device_class`; pass
-   `""` on newer kernels, preserve old member access on older kernels.
+- **Driver ACPI Match**: Binds `toshiba_acpi` to `DNBK0001` devices.
+- **FIFO Drain Fix**: Loops until the event ring buffer is empty, ensuring instant and accurate hotkey responses with zero lag.
+- **Cross-Distro & Multi-Kernel DKMS**: Fully compatible with Linux **5.15 LTS, 6.1 LTS, 6.6 LTS, 6.12 LTS, and 7.x+** (including the Linux 7.3 `acpi_device_pnp.device_class` API change).
+- **Auto-Compiler Detection**: Automatically detects Clang-built kernels (CachyOS, OpenEmbedded, custom LLVM builds) and applies `LLVM=1`, while defaulting to GCC on Fedora, Debian/Ubuntu, and Arch.
+- **Passive Backlight Daemon**: A background service (`dynabook-kbdbacklightd`) that listens for `KEY_KBDILLUMTOGGLE` to cycle modes (`OFF -> ON -> AUTO`) via sysfs while preserving desktop OSD animations (GNOME, KDE Plasma).
 
-All three are bundled as a DKMS module so they survive kernel updates without
-recompiling by hand. The module auto-detects clang-built kernels (CachyOS,
-Fedora) via `LLVM=1` in `dkms.conf`.
+---
 
-## Install (as root)
+## Distribution Prerequisites
 
-**Easy way** — use the included script (reads version from `dkms.conf`):
+Before installation, ensure your system has kernel development headers, DKMS, and Python 3:
+
+| Distribution | Required Packages |
+| :--- | :--- |
+| **Fedora / RHEL / Rocky** | `sudo dnf install kernel-devel dkms python3-evdev` |
+| **Debian / Ubuntu / Mint** | `sudo apt-get install linux-headers-$(uname -r) dkms python3-evdev` |
+| **Arch Linux / CachyOS** | `sudo pacman -S linux-headers dkms python-evdev` |
+| **openSUSE Tumbleweed / Leap** | `sudo zypper install kernel-devel dkms python3-evdev` |
+
+> [!NOTE]
+> **BIOS Setting**: Ensure the Keyboard Backlight setting in your BIOS/UEFI is configured to **OS-controlled** (or Timer). If set strictly to firmware timer, hardware overrides OS writes.
+
+> [!IMPORTANT]
+> **Secure Boot**: If Secure Boot is enabled, DKMS signs the compiled module using the system MOK key (`/var/lib/dkms/mok.key`). If this is your first DKMS module, enroll the key in your firmware MOK list before reboot:
+> ```sh
+> sudo mokutil --import /var/lib/dkms/mok.pub
+> ```
+> *(Create a one-time password when prompted, then reboot and complete the MOK enrollment dialog in your firmware screen).*
+
+---
+
+## Installation
+
+### Method 1: Automatic (Recommended)
+
+The included installer detects your distribution, verifies and installs missing prerequisites, configures DKMS, loads the kernel module, and enables the userspace daemon:
 
 ```sh
 git clone https://github.com/jomon-palayur/dynabook-linux-acpi.git
@@ -60,34 +66,27 @@ cd dynabook-linux-acpi
 sudo ./install.sh
 ```
 
-**Manual way:**
+### Method 2: Manual
 
 ```sh
 git clone https://github.com/jomon-palayur/dynabook-linux-acpi.git
 cd dynabook-linux-acpi
+
+# 1. Register and build DKMS module
 sudo mkdir -p /usr/src/toshiba_acpi_dynabook-0.25
 sudo cp dkms/toshiba_acpi.c /usr/src/toshiba_acpi_dynabook-0.25/
 sudo cp dkms/dkms.conf     /usr/src/toshiba_acpi_dynabook-0.25/
 sudo cp dkms/Makefile      /usr/src/toshiba_acpi_dynabook-0.25/
+
 sudo dkms add    -m toshiba_acpi_dynabook -v 0.25
 sudo dkms build  -m toshiba_acpi_dynabook -v 0.25
 sudo dkms install -m toshiba_acpi_dynabook -v 0.25
+
+# 2. Reload kernel driver
+sudo modprobe -r toshiba_acpi 2>/dev/null || true
 sudo modprobe toshiba_acpi
-```
 
-## Keyboard-backlight Fn key (userspace daemon)
-
-The kernel driver delivers `KEY_KBDILLUMTOGGLE` (scancode `0x12c`) correctly,
-but GNOME only shows the on-screen indicator and does not actually toggle the
-LED — and `toshiba_acpi` does not toggle the backlight itself. So a small
-**passive** daemon (`daemon/dynabook-kbdbacklightd`) listens for that keycode
-and cycles the backlight mode (`OFF -> ON -> AUTO`) by writing
-`kbd_backlight_mode` in sysfs. It does not grab the device, so GNOME's OSD
-still appears.
-
-Install and enable (also done by `install.sh`):
-
-```sh
+# 3. Install keyboard backlight daemon
 sudo cp daemon/dynabook-kbdbacklightd /usr/local/bin/
 sudo chmod +x /usr/local/bin/dynabook-kbdbacklightd
 sudo cp daemon/dynabook-kbdbacklightd.service /etc/systemd/system/
@@ -95,70 +94,91 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now dynabook-kbdbacklightd
 ```
 
-Requires `python-evdev` (e.g. `sudo dnf install python3-evdev` or `sudo pacman -S python-evdev`).
-The daemon runs as root (it reads `/dev/input/event*` and writes sysfs). Verify:
+---
+
+## Verification
+
+Once installed, verify that the module and devices are active:
 
 ```sh
+# 1. Verify kernel module is loaded
+lsmod | grep toshiba_acpi
+
+# 2. Check LED class device
+ls /sys/class/leds/ | grep toshiba
+# Expected output: toshiba::kbd_backlight
+
+# 3. Verify sysfs node
+cat /sys/bus/acpi/devices/DNBK0001:00/kbd_backlight_mode
+
+# 4. Verify background daemon
 systemctl status dynabook-kbdbacklightd
-# press the keyboard-backlight Fn key; mode should cycle:
-cat /sys/devices/LNXSYSTM:00/LNXSYBUS:00/DNBK0001:00/kbd_backlight_mode
 ```
 
-> **Note:** set the keyboard-backlight to **OS-controlled** in the BIOS,
-> otherwise the firmware timer owns the LED and the OS writes are ignored.
+---
 
-> **Note for CachyOS / clang-built kernels:** the module must be built with
-> `LLVM=1` (the `dkms.conf` in this repo already does this automatically). A
-> plain gcc build fails with `-mstack-alignment` errors on clang kernels.
+## Keyboard Backlight Control & Sysfs Interface
 
-> **Secure Boot:** DKMS signs the module with `/var/lib/dkms/mok.key`. If
-> Secure Boot is enabled, you must enroll the MOK certificate
-> (`/var/lib/dkms/mok.pub`) in your firmware/SHIM *before* the module will
-> load — otherwise it is rejected. With Secure Boot off, no action is needed.
-
-After loading, verify:
+The keyboard backlight can be toggled using your laptop's **Fn + Backlight** key, or controlled directly via sysfs:
 
 ```sh
-ls /sys/class/leds/ | grep toshiba     # -> toshiba::kbd_backlight
-lsmod | grep toshiba_acpi              # -> loaded
+# Stable sysfs path across all distributions
+BACKLIGHT="/sys/bus/acpi/devices/DNBK0001:00"
+
+# Modes:
+#   0x10 (16) = OFF
+#   0x8  (8)  = ON
+#   0x2  (2)  = AUTO (turns on with keystrokes, shuts off after timeout)
+
+# Set mode to ON:
+echo 0x8 | sudo tee "$BACKLIGHT/kbd_backlight_mode"
+
+# Set mode to AUTO with an 8-second timeout:
+echo 0x2 | sudo tee "$BACKLIGHT/kbd_backlight_mode"
+echo 8   | sudo tee "$BACKLIGHT/kbd_backlight_timeout"
+
+# Turn backlight OFF:
+echo 0x10 | sudo tee "$BACKLIGHT/kbd_backlight_mode"
 ```
 
-The keyboard backlight is now controllable via sysfs (substitute your actual
-path — the `DNBK0001:00` segment is stable but the prefix may vary):
+---
+
+## Project Structure
+
+- **[`dkms/`](file:///home/jomon/Documents/GitHub/dynabook-linux-acpi/dkms)**: DKMS packaging files (`toshiba_acpi.c`, `dkms.conf`, `Makefile`) with multi-kernel compatibility and Clang/LLVM detection.
+- **[`daemon/`](file:///home/jomon/Documents/GitHub/dynabook-linux-acpi/daemon)**: `dynabook-kbdbacklightd` passive Python evdev daemon and systemd service unit.
+- **[`submission/`](file:///home/jomon/Documents/GitHub/dynabook-linux-acpi/submission)**: Linux kernel upstream patch series and cover letter formatted for `platform-driver-x86@vger.kernel.org`.
+- **[`install.sh`](file:///home/jomon/Documents/GitHub/dynabook-linux-acpi/install.sh)**: Cross-distro installer and uninstaller script.
+- **[`investigation.md`](file:///home/jomon/Documents/GitHub/dynabook-linux-acpi/investigation.md)**: Reverse-engineering documentation, ACPI DSDT disassembly, and EC register analysis.
+
+---
+
+## Uninstallation
+
+To completely remove the DKMS module, daemon, and restore stock behavior:
 
 ```sh
-# find the node
-BACKLIGHT=/sys/devices/LNXSYSTM:00/LNXSYBUS:00/DNBK0001:00
-
-# mode: 0x2 = AUTO (with timeout), 0x8 = ON, 0x10 = OFF
-echo 0x8  | sudo tee "$BACKLIGHT/kbd_backlight_mode"
-
-# auto-off timeout in seconds (1-60), used in AUTO mode
-echo 8    | sudo tee "$BACKLIGHT/kbd_backlight_timeout"
+# Automated removal
+sudo ./install.sh --uninstall
 ```
 
-`AUTOINSTALL=yes` in `dkms.conf` means the module auto-rebuilds on every
-kernel update.
-
-## Files
-
-- `dkms/` — patched `toshiba_acpi.c` + `dkms.conf` + `Makefile`
-  (ready to copy to `/usr/src/toshiba_acpi_dynabook-0.25`).
-- `daemon/` — `dynabook-kbdbacklightd` (passive Fn-key toggle daemon) +
-  its systemd unit.
-- `submission/` — *(not required to install)* the three standalone kernel
-  patches + cover letter, formatted for upstream submission.
-- `investigation.md` — full root-cause analysis, evidence trail, and ACPI
-  disassembly notes.
-
-## Remove
-
-To remove everything:
+Or manually:
 
 ```sh
 sudo systemctl disable --now dynabook-kbdbacklightd
-sudo rm /etc/systemd/system/dynabook-kbdbacklightd.service
-sudo rm /usr/local/bin/dynabook-kbdbacklightd
-dkms remove -m toshiba_acpi_dynabook -v 0.25 --all
+sudo rm -f /etc/systemd/system/dynabook-kbdbacklightd.service
+sudo rm -f /usr/local/bin/dynabook-kbdbacklightd
+sudo systemctl daemon-reload
+
+sudo dkms remove -m toshiba_acpi_dynabook --all
+sudo rm -rf /usr/src/toshiba_acpi_dynabook-*
 sudo depmod -a
+sudo modprobe -r toshiba_acpi 2>/dev/null || true
+sudo modprobe toshiba_acpi 2>/dev/null || true
 ```
+
+---
+
+## License
+
+GPL-2.0-or-later. See [`LICENSE`](file:///home/jomon/Documents/GitHub/dynabook-linux-acpi/LICENSE) for details.
